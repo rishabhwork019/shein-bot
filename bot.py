@@ -1,177 +1,190 @@
+import os
+import random
+import string
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Updater,
-    CommandHandler,
-    CallbackQueryHandler,
-    CallbackContext,
-    MessageHandler,
-    Filters,
-)
-from datetime import datetime
+from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, Filters
 
-TOKEN = "8433092044:AAFLcElVT1mjsiEX3mwzESTL6ZBqosZJVlA"
+TOKEN = os.getenv("8433092044:AAFLcElVT1mjsiEX3mwzESTL6ZBqosZJVlA")
 ADMIN_ID = 5951377518
 
-# 🧠 Store users (simple memory store)
-USERS = set()
+orders = {}
 
 
-# ================= START =================
+# ================== HELPERS ==================
+
+def generate_order_id():
+    return "SH-" + "".join(random.choices(string.digits, k=6))
+
+
+def get_voucher(file_name):
+    if not os.path.exists(file_name):
+        return None
+
+    with open(file_name, "r") as f:
+        lines = f.read().strip().splitlines()
+
+    if not lines:
+        return None
+
+    code = lines[0]
+    remaining = lines[1:]
+
+    with open(file_name, "w") as f:
+        f.write("\n".join(remaining))
+
+    return code
+
+
+# ================== START ==================
+
 def start(update: Update, context: CallbackContext):
-    user = update.message.from_user
-    USERS.add(user.id)
-
-    keyboard = [
-        [InlineKeyboardButton("🛒 Buy Shein Discount Voucher", callback_data="BUY")]
-    ]
+    keyboard = [[InlineKeyboardButton("🛒 Buy Shein Voucher", callback_data="BUY")]]
 
     update.message.reply_text(
-        "👗 *Welcome to Shein Voucher Store*\n\n"
-        "Authentic Shein discount vouchers at best prices.\n\n"
-        "Tap below to continue 👇",
+        "👗 Welcome to *Shein Voucher Store*\n\n"
+        "🎟 Choose your discount voucher below 👇",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-    # Notify admin
-    context.bot.send_message(
-        chat_id=ADMIN_ID,
-        text=(
-            "👤 *New User Started Bot*\n\n"
-            f"Name: {user.first_name}\n"
-            f"User ID: `{user.id}`\n"
-            f"Username: @{user.username if user.username else 'NA'}\n"
-            f"Time: {datetime.now().strftime('%d %b %Y, %I:%M %p')}"
-        ),
-        parse_mode="Markdown"
-    )
 
+# ================== BUTTON HANDLER ==================
 
-# ================= BUTTON HANDLER =================
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     query.answer()
 
     if query.data == "BUY":
         keyboard = [
-            [InlineKeyboardButton("🎟 ₹500 OFF | Pay ₹20", callback_data="V500")],
-            [InlineKeyboardButton("🎟 ₹1K OFF | Pay ₹50", callback_data="V1000")],
-            [InlineKeyboardButton("🎟 ₹2K OFF | Pay ₹75", callback_data="V2000")],
-            [InlineKeyboardButton("🎟 ₹4K OFF | Pay ₹150", callback_data="V4000")],
+            [InlineKeyboardButton("🎟 ₹500 OFF | ₹20", callback_data="V500")],
+            [InlineKeyboardButton("🎟 ₹1000 OFF | ₹50", callback_data="V1000")],
+            [InlineKeyboardButton("🎟 ₹2000 OFF | ₹75", callback_data="V2000")],
+            [InlineKeyboardButton("🎟 ₹4000 OFF | ₹150", callback_data="V4000")],
         ]
+
         query.edit_message_text(
-            "🛍 *Select your voucher:*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
+            "🛍 Select your voucher:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     elif query.data in ["V500", "V1000", "V2000", "V4000"]:
+        user = query.from_user
+        order_id = generate_order_id()
+
+        voucher_map = {
+            "V500": ("₹500 OFF", 20),
+            "V1000": ("₹1000 OFF", 50),
+            "V2000": ("₹2000 OFF", 75),
+            "V4000": ("₹4000 OFF", 150),
+        }
+
+        voucher_name, price = voucher_map[query.data]
+
+        orders[order_id] = {
+            "user_id": user.id,
+            "username": user.username,
+            "name": user.first_name,
+            "voucher_type": query.data,
+            "voucher_name": voucher_name,
+            "price": price
+        }
+
         query.edit_message_text(
-            "💳 *Payment Details*\n\n"
-            "UPI ID:\n"
-            "`sheinvouchear@ptyes`\n\n"
-            "📸 Please send payment screenshot here.",
+            f"🧾 *Order Created*\n\n"
+            f"Order ID: `{order_id}`\n"
+            f"Voucher: {voucher_name}\n"
+            f"Amount: ₹{price}\n\n"
+            f"💳 Pay via UPI:\n"
+            f"`sheinvouchear@ptyes`\n\n"
+            f"📸 Send payment screenshot after payment.",
+            parse_mode="Markdown"
+        )
+
+        # Notify admin
+        context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=(
+                "📥 *New Order*\n\n"
+                f"Order ID: `{order_id}`\n"
+                f"User: {user.first_name}\n"
+                f"User ID: `{user.id}`\n"
+                f"Voucher: {voucher_name}\n"
+                f"Amount: ₹{price}"
+            ),
             parse_mode="Markdown"
         )
 
 
-# ================= FORWARD ALL NON-COMMAND MESSAGES =================
-def forward_messages(update: Update, context: CallbackContext):
-    user = update.message.from_user
-    USERS.add(user.id)
+# ================== SCREENSHOT FORWARD ==================
 
-    # Ignore admin messages
-    if user.id == ADMIN_ID:
-        return
-
-    # Forward message
+def handle_photo(update: Update, context: CallbackContext):
     context.bot.forward_message(
         chat_id=ADMIN_ID,
         from_chat_id=update.message.chat_id,
         message_id=update.message.message_id
     )
 
+    update.message.reply_text("✅ Screenshot received. Waiting for verification.")
 
-# ================= SEND VOUCHER =================
-def sendvoucher(update: Update, context: CallbackContext):
+
+# ================== APPROVE ORDER ==================
+
+def approve(update: Update, context: CallbackContext):
     if update.message.from_user.id != ADMIN_ID:
         return
 
-    try:
-        user_id = int(context.args[0])
-        code = context.args[1]
-
-        context.bot.send_message(
-            chat_id=user_id,
-            text=(
-                "🎉 *Your Shein Voucher*\n\n"
-                f"🎟 Code: `{code}`\n\n"
-                "Apply at checkout on Shein.\n"
-                "Happy Shopping 🛍"
-            ),
-            parse_mode="Markdown"
-        )
-
-        update.message.reply_text("✅ Voucher sent.")
-
-    except:
-        update.message.reply_text(
-            "❌ Usage:\n/sendvoucher USER_ID CODE"
-        )
-
-
-# ================= BROADCAST =================
-def broadcast(update: Update, context: CallbackContext):
-    if update.message.from_user.id != ADMIN_ID:
+    if not context.args:
+        update.message.reply_text("❌ Usage: /approve ORDER_ID")
         return
 
-    message = " ".join(context.args)
-    if not message:
-        update.message.reply_text("❌ Usage:\n/broadcast MESSAGE")
+    order_id = context.args[0]
+
+    if order_id not in orders:
+        update.message.reply_text("❌ Order not found.")
         return
 
-    sent = 0
-    for user_id in USERS:
-        try:
-            context.bot.send_message(chat_id=user_id, text=message)
-            sent += 1
-        except:
-            pass
+    order = orders[order_id]
 
-    update.message.reply_text(f"📢 Broadcast sent to {sent} users.")
+    file_map = {
+        "V500": "vouchers_500.txt",
+        "V1000": "vouchers_1000.txt",
+        "V2000": "vouchers_2000.txt",
+        "V4000": "vouchers_4000.txt",
+    }
 
+    file_name = file_map[order["voucher_type"]]
+    code = get_voucher(file_name)
 
-# ================= SEND TO SPECIFIC USER =================
-def send(update: Update, context: CallbackContext):
-    if update.message.from_user.id != ADMIN_ID:
+    if not code:
+        update.message.reply_text("❌ No vouchers left in stock!")
         return
 
-    try:
-        user_id = int(context.args[0])
-        message = " ".join(context.args[1:])
+    # Send voucher to user
+    context.bot.send_message(
+        chat_id=order["user_id"],
+        text=(
+            "🎉 *Payment Verified!*\n\n"
+            f"🎟 Your Shein Voucher Code:\n`{code}`\n\n"
+            "Use it on Shein checkout 🛍"
+        ),
+        parse_mode="Markdown"
+    )
 
-        context.bot.send_message(chat_id=user_id, text=message)
-        update.message.reply_text("✅ Message sent.")
+    update.message.reply_text(f"✅ Voucher sent for Order {order_id}")
 
-    except:
-        update.message.reply_text(
-            "❌ Usage:\n/send USER_ID MESSAGE"
-        )
+    del orders[order_id]
 
 
-# ================= MAIN =================
+# ================== MAIN ==================
+
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CallbackQueryHandler(button_handler))
-    dp.add_handler(CommandHandler("sendvoucher", sendvoucher))
-    dp.add_handler(CommandHandler("broadcast", broadcast))
-    dp.add_handler(CommandHandler("send", send))
-
-    # Forward all non-command messages
-    dp.add_handler(MessageHandler(Filters.text | Filters.photo | Filters.document, forward_messages))
+    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
+    dp.add_handler(CommandHandler("approve", approve))
 
     updater.start_polling()
     updater.idle()
