@@ -1,11 +1,14 @@
 import os
-import random
-import string
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext, MessageHandler, Filters
 
-TOKEN = os.getenv("8433092044:AAFLcElVT1mjsiEX3mwzESTL6ZBqosZJVlA")
-ADMIN_ID = 5951377518
+TOKEN = os.getenv("TOKEN")
+ADMIN_ID = os.getenv("ADMIN_ID")
+
+print("DEBUG TOKEN =", TOKEN)
+print("DEBUG ADMIN_ID =", ADMIN_ID)
+
+if not TOKEN:
+    raise Exception("❌ TOKEN not found in environment variables!")
+
 
 orders = {}
 
